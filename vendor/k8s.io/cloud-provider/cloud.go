@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
@@ -190,6 +190,8 @@ type Instances interface {
 	InstanceExistsByProviderID(ctx context.Context, providerID string) (bool, error)
 	// InstanceShutdownByProviderID returns true if the instance is shutdown in cloudprovider
 	InstanceShutdownByProviderID(ctx context.Context, providerID string) (bool, error)
+	//MapNodeIPTovmName
+	MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, error)
 }
 
 // InstancesV2 is an abstract, pluggable interface for cloud provider instances.

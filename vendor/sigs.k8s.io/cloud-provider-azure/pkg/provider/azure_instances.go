@@ -23,6 +23,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
+	"github.com/Azure/go-autorest/autorest"
+	"github.com/Azure/go-autorest/autorest/adal"
+	"github.com/Azure/go-autorest/autorest/azure"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	cloudprovider "k8s.io/cloud-provider"
@@ -506,4 +510,85 @@ func (az *Cloud) InstanceMetadata(ctx context.Context, node *v1.Node) (*cloudpro
 // This is a simple string cast.
 func mapNodeNameToVMName(nodeName types.NodeName) string {
 	return string(nodeName)
+}
+
+func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, error) {
+	fmt.Println("#############TESTING###################")
+	fmt.Printf("\nSubscription ID: %v\n", az.Config.SubscriptionID)
+	intfClient := network.NewInterfacesClient(az.Config.SubscriptionID)
+
+	env, envErr := azure.EnvironmentFromName(az.Config.Cloud)
+	if envErr != nil {
+		fmt.Printf("Error getting EnvironmentFromName %v\n", envErr)
+	}
+
+	oauthConfig, oAuthErr := adal.NewOAuthConfig(env.ActiveDirectoryEndpoint, az.Config.TenantID)
+	if oAuthErr != nil {
+		fmt.Printf("Error getting NewOAuthConfig %v\n", oAuthErr)
+	}
+
+	armSpt, tokenErr := adal.NewServicePrincipalToken(*oauthConfig, az.Config.AADClientID, az.Config.AADClientSecret, env.ServiceManagementEndpoint)
+
+	if tokenErr != nil {
+		fmt.Printf("Error getting NewOAuthConfig %v\n", tokenErr)
+	}
+
+	authorizer := autorest.NewBearerAuthorizer(armSpt)
+	intfClient.Authorizer = authorizer
+	results, err := intfClient.ListComplete(context.Background(), az.Config.ResourceGroup)
+	fmt.Printf("Got List of NICS.. %v\n", results)
+
+	//Subnets
+	subNetClient := az.SubnetsClient
+	fmt.Printf("Got the subNetClient %v\n", subNetClient)
+	subnets, suberr := subNetClient.List(context.Background(), az.Config.ResourceGroup, az.Config.VnetName)
+	if suberr != nil {
+		klog.Errorf("Could not get Subnets for Resource Group %s, Virtual Network %s", az.Config.ResourceGroup, az.Config.VnetName)
+		msg := errors.New("subnet get error")
+		return "", msg
+	}
+	subnetMap := map[string]int{}
+	fmt.Printf("Subnets are %v\n", subnets)
+	for _, subnet := range subnets {
+		subnetMap[*subnet.ID] = 1
+		fmt.Printf("Subnet Name is %v\n", *subnet.Name)
+		fmt.Printf("Subnet Id is %v\n", *subnet.ID)
+	}
+	if err != nil {
+		fmt.Printf("Could not get the list of NICs : %v", err)
+	}
+
+	//Iterate over the NICS
+	vmmap := make(map[string]string)
+	fmt.Println("Getting all the VMs..")
+	for results.NotDone() {
+		fmt.Println("Inside for loop")
+		ipcs := *results.Value().IPConfigurations
+		privateIPs := make([]string, 1)
+		var vm string
+		for _, ipc := range ipcs {
+			fmt.Println("Inside inner for loop")
+			subnetID := *ipc.Subnet.ID
+			if _, ok := subnetMap[subnetID]; ok {
+				privateIPs = append(privateIPs, *ipc.PrivateIPAddress)
+				fmt.Printf("\n Private IPs are : %v\n", privateIPs)
+				if results.Value().VirtualMachine != nil {
+					vm = *results.Value().VirtualMachine.ID
+					fmt.Printf("\nVirtual Machines are : %v\n", vm)
+				}
+			}
+		}
+		split := strings.Split(vm, "/")
+		vmmap[privateIPs[1]] = split[len(split)-1]
+		fmt.Println(privateIPs, "\t", split[len(split)-1])
+		results.NextWithContext(context.Background())
+	}
+
+	vMName, ok := vmmap[nodeIp]
+	if !ok {
+		fmt.Printf("Node id was not found %v\n", nodeIp)
+		return "", errors.New("could not get VM Name")
+	}
+	fmt.Println(vmmap)
+	return vMName, nil
 }

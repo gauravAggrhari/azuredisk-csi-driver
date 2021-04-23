@@ -19,16 +19,17 @@ package azuredisk
 import (
 	"context"
 	"fmt"
+	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
-	"os"
+
 	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2020-12-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
+	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/protobuf/ptypes"
-        "github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
-	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
@@ -86,72 +87,71 @@ type listVolumeStatus struct {
 const (
 	subID = "208a18fa-4027-4666-b866-df6f940e84dd"
 	rg    = "satellite-rg"
-        vnet  = "satellite-vnet"
+	vnet  = "satellite-vnet"
 )
 
-func getNodeName(nodeID string) string{
+func getNodeName(nodeID string) string {
 	intfClient := network.NewInterfacesClient(subID)
 	subnetClient := network.NewSubnetsClient(subID)
 	settings, _ := auth.GetSettingsFromEnvironment()
 	fmt.Printf("SETTINGS : %v", settings)
 	authorizer, err := settings.GetAuthorizer()
-	if err != nil{
+	if err != nil {
 		fmt.Printf("ERROR : %v", err)
 	}
 	intfClient.Authorizer = authorizer
-        subnetClient.Authorizer = authorizer	
+	subnetClient.Authorizer = authorizer
 	subnetMap := map[string]int{}
-        subnetResults, err := subnetClient.ListComplete(context.Background(), rg, vnet)
-        if err != nil {
-                fmt.Println(err)
-                os.Exit(1)
-        }
+	subnetResults, err := subnetClient.ListComplete(context.Background(), rg, vnet)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 	for subnetResults.NotDone() {
-                subnetMap[*subnetResults.Value().ID] = 1
-                subnetResults.NextWithContext(context.Background())
-        }
-        fmt.Println("Subnets")
-        fmt.Println(subnetMap)
-        // Get a list of all the nics
-        results, err := intfClient.ListComplete(context.Background(), rg)
-        fmt.Println(results)
-        if err != nil {
-                fmt.Printf("Error: %s", err)
-        }
-     //   fmt.Println("Private IP\tVM")
-        fmt.Println("===========\t=======================================================")
+		subnetMap[*subnetResults.Value().ID] = 1
+		subnetResults.NextWithContext(context.Background())
+	}
+	fmt.Println("Subnets")
+	fmt.Println(subnetMap)
+	// Get a list of all the nics
+	results, err := intfClient.ListComplete(context.Background(), rg)
+	fmt.Println(results)
+	if err != nil {
+		fmt.Printf("Error: %s", err)
+	}
+	//   fmt.Println("Private IP\tVM")
+	fmt.Println("============================================================================")
 	vmmap := make(map[string]string)
-        for results.NotDone() {
-                ipcs := *results.Value().IPConfigurations
-                privateIPs := make([]string, 1)
-                var vm string
-                for _, ipc := range ipcs {
-                        subnetID := *ipc.Subnet.ID
-                        if _, ok := subnetMap[subnetID]; ok {
-                                privateIPs = append(privateIPs, *ipc.PrivateIPAddress)
+	for results.NotDone() {
+		ipcs := *results.Value().IPConfigurations
+		privateIPs := make([]string, 1)
+		var vm string
+		for _, ipc := range ipcs {
+			subnetID := *ipc.Subnet.ID
+			if _, ok := subnetMap[subnetID]; ok {
+				privateIPs = append(privateIPs, *ipc.PrivateIPAddress)
 				if results.Value().VirtualMachine != nil {
-                                	vm = *results.Value().VirtualMachine.ID
+					vm = *results.Value().VirtualMachine.ID
 				}
-                        }
-                }
-                split := strings.Split(vm, "/")
+			}
+		}
+		split := strings.Split(vm, "/")
 		vmmap[privateIPs[1]] = split[len(split)-1]
-                //fmt.Println(privateIPs, "\t", split[len(split)-1])
-                results.NextWithContext(context.Background())
-        }
+		//fmt.Println(privateIPs, "\t", split[len(split)-1])
+		results.NextWithContext(context.Background())
+	}
 	vMName, ok := vmmap[nodeID]
 	if !ok {
 		fmt.Printf("Node id was not found %v\n", nodeID)
 		return ""
 	}
 	fmt.Println(vmmap)
+	fmt.Println("============================================================================")
 	return vMName
 }
+
 // CreateVolume provisions an azure disk
 func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
-	fmt.Println("Calling getNodeName from CreateVolume")
-	nodeName := getNodeName("10.0.2.13")
-	fmt.Printf("\nXXXXXXXXXXX Found the VM Name XXXXXXXXXXXX %v\n", nodeName)
 	if err := d.ValidateControllerServiceRequest(csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME); err != nil {
 		klog.Errorf("invalid create volume req: %v", req)
 		return nil, err
@@ -464,12 +464,22 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 	if err != nil {
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("Volume not found, failed with error: %v", err))
 	}
-
 	nodeID := req.GetNodeId()
-	fmt.Printf("NodeID is %v\n", nodeID)
-	fmt.Println("Calling getNodeName from CreateVolume")
-	vMName := getNodeName(nodeID)
-	fmt.Printf("\nXXXXXXXXXXX Found the VM Name for Node ID %v XXXXXXXXXXXX:%v\n", nodeID, vMName)
+	/*
+		fmt.Printf("NodeID is %v\n", nodeID)
+		fmt.Println("Calling getNodeName from CreateVolume")
+		vMName := getNodeName(nodeID)
+		fmt.Printf("\nXXXXXXXXXXX Found the VM Name for Node ID %v XXXXXXXXXXXX:%v\n", nodeID, vMName)
+	*/
+	//Gaurav : This is added as place holder still
+	instances, ok := d.cloud.Instances()
+	if !ok {
+		return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")
+	}
+	vmname, _ := instances.MapNodeIPTovmName(context.Background(), nodeID)
+	fmt.Printf("\n#############Got vmname #################%v\n", vmname)
+	//================================================================================================
+
 	if len(nodeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Node ID not provided")
 	}
