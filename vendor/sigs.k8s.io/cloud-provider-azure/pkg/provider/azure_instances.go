@@ -23,10 +23,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
-	"github.com/Azure/go-autorest/autorest"
-	"github.com/Azure/go-autorest/autorest/adal"
-	"github.com/Azure/go-autorest/autorest/azure"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	cloudprovider "k8s.io/cloud-provider"
@@ -514,6 +510,28 @@ func mapNodeNameToVMName(nodeName types.NodeName) string {
 
 func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, error) {
 	fmt.Println("#############TESTING###################")
+	infClient := az.InterfacesClient
+	interfaceList, inferr := infClient.List(context.Background(), az.Config.ResourceGroup)
+	if inferr != nil {
+		fmt.Printf("Error getting interfaces %v\n", inferr)
+		return "", nil
+	}
+	/*fmt.Printf("\nGo the interfaces %v\n", interfaceList)
+	for _, interf := range interfaceList {
+		fmt.Printf("\n Interface ID is %v\n", *interf.ID)
+		fmt.Printf("\n Interface Name is : %v\n", *interf.Name)
+		ipconfs := *interf.IPConfigurations
+		fmt.Println("Listing Subnet IDs for IPCONF")
+		for _, ipconf := range ipconfs {
+			fmt.Printf("Subnet ID is : %v\n", *ipconf.Subnet.ID)
+		}
+		fmt.Println("Private IPs are :")
+		for _, ipconf := range ipconfs {
+			fmt.Printf("Private IP is : %v\n", *ipconf.PrivateIPAddress)
+		}
+		fmt.Printf("Virtual machine : %v\n", *interf.VirtualMachine.ID)
+	}
+	return "", nil
 	fmt.Printf("\nSubscription ID: %v\n", az.Config.SubscriptionID)
 	intfClient := network.NewInterfacesClient(az.Config.SubscriptionID)
 
@@ -533,11 +551,14 @@ func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, 
 		fmt.Printf("Error getting NewOAuthConfig %v\n", tokenErr)
 	}
 
-	authorizer := autorest.NewBearerAuthorizer(armSpt)
-	intfClient.Authorizer = authorizer
-	results, err := intfClient.ListComplete(context.Background(), az.Config.ResourceGroup)
-	fmt.Printf("Got List of NICS.. %v\n", results)
-
+	//authorizer := autorest.NewBearerAuthorizer(armSpt)
+	//intfClient.Authorizer = authorizer
+	//results, err := intfClient.ListComplete(context.Background(), az.Config.ResourceGroup)
+	if err != nil {
+		fmt.Printf("Could not get the list of NICs : %v", err)
+	}
+	//fmt.Printf("Got List of NICS.. %v\n", results)
+	*/
 	//Subnets
 	subNetClient := az.SubnetsClient
 	fmt.Printf("Got the subNetClient %v\n", subNetClient)
@@ -554,16 +575,11 @@ func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, 
 		fmt.Printf("Subnet Name is %v\n", *subnet.Name)
 		fmt.Printf("Subnet Id is %v\n", *subnet.ID)
 	}
-	if err != nil {
-		fmt.Printf("Could not get the list of NICs : %v", err)
-	}
-
-	//Iterate over the NICS
+	//====================
 	vmmap := make(map[string]string)
-	fmt.Println("Getting all the VMs..")
-	for results.NotDone() {
+	for _, interf := range interfaceList {
 		fmt.Println("Inside for loop")
-		ipcs := *results.Value().IPConfigurations
+		ipcs := *interf.IPConfigurations
 		privateIPs := make([]string, 1)
 		var vm string
 		for _, ipc := range ipcs {
@@ -572,8 +588,8 @@ func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, 
 			if _, ok := subnetMap[subnetID]; ok {
 				privateIPs = append(privateIPs, *ipc.PrivateIPAddress)
 				fmt.Printf("\n Private IPs are : %v\n", privateIPs)
-				if results.Value().VirtualMachine != nil {
-					vm = *results.Value().VirtualMachine.ID
+				if interf.VirtualMachine != nil {
+					vm = *interf.VirtualMachine.ID
 					fmt.Printf("\nVirtual Machines are : %v\n", vm)
 				}
 			}
@@ -581,9 +597,35 @@ func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, 
 		split := strings.Split(vm, "/")
 		vmmap[privateIPs[1]] = split[len(split)-1]
 		fmt.Println(privateIPs, "\t", split[len(split)-1])
-		results.NextWithContext(context.Background())
 	}
-
+	//====================
+	/*
+		//Iterate over the NICS
+		vmmap := make(map[string]string)
+		fmt.Println("Getting all the VMs..")
+		for results.NotDone() {
+			fmt.Println("Inside for loop")
+			ipcs := *results.Value().IPConfigurations
+			privateIPs := make([]string, 1)
+			var vm string
+			for _, ipc := range ipcs {
+				fmt.Println("Inside inner for loop")
+				subnetID := *ipc.Subnet.ID
+				if _, ok := subnetMap[subnetID]; ok {
+					privateIPs = append(privateIPs, *ipc.PrivateIPAddress)
+					fmt.Printf("\n Private IPs are : %v\n", privateIPs)
+					if results.Value().VirtualMachine != nil {
+						vm = *results.Value().VirtualMachine.ID
+						fmt.Printf("\nVirtual Machines are : %v\n", vm)
+					}
+				}
+			}
+			split := strings.Split(vm, "/")
+			vmmap[privateIPs[1]] = split[len(split)-1]
+			fmt.Println(privateIPs, "\t", split[len(split)-1])
+			results.NextWithContext(context.Background())
+		}
+	*/
 	vMName, ok := vmmap[nodeIp]
 	if !ok {
 		fmt.Printf("Node id was not found %v\n", nodeIp)

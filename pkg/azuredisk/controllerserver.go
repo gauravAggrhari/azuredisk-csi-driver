@@ -90,6 +90,25 @@ const (
 	vnet  = "satellite-vnet"
 )
 
+func isValidIPv4(host string) bool {
+	parts := strings.Split(host, ".")
+
+	if len(parts) < 4 {
+		return false
+	}
+
+	for _, x := range parts {
+		if i, err := strconv.Atoi(x); err == nil {
+			if i < 0 || i > 255 {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+	return true
+}
+
 func getNodeName(nodeID string) string {
 	intfClient := network.NewInterfacesClient(subID)
 	subnetClient := network.NewSubnetsClient(subID)
@@ -465,31 +484,29 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 		return nil, status.Error(codes.NotFound, fmt.Sprintf("Volume not found, failed with error: %v", err))
 	}
 	nodeID := req.GetNodeId()
-	/*
-		fmt.Printf("NodeID is %v\n", nodeID)
-		fmt.Println("Calling getNodeName from CreateVolume")
-		vMName := getNodeName(nodeID)
-		fmt.Printf("\nXXXXXXXXXXX Found the VM Name for Node ID %v XXXXXXXXXXXX:%v\n", nodeID, vMName)
-	*/
-	//Gaurav : This is added as place holder still
-	instances, ok := d.cloud.Instances()
-	if !ok {
-		return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")
-	}
-	vmname, _ := instances.MapNodeIPTovmName(context.Background(), nodeID)
-	fmt.Printf("\n#############Got vmname #################%v\n", vmname)
-	//================================================================================================
-
 	if len(nodeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Node ID not provided")
 	}
 
-	nodeName := types.NodeName(nodeID)
-	diskName, err := GetDiskName(diskURI)
-	if err != nil {
-		return nil, err
+	//Get the VM name from the private IP
+	var nodeName types.NodeName
+	if isValidIPv4(nodeID) {
+		instances, ok := d.cloud.Instances()
+		if !ok {
+			return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")
+		}
+		vmName, _ := instances.MapNodeIPTovmName(context.Background(), nodeID)
+		fmt.Printf("\n############# Got the VM name ################# %v\n", vmName)
+		nodeName = types.NodeName(vmName)
+		//nodeName := types.NodeName(nodeID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		nodeName = types.NodeName(nodeID)
 	}
 
+	diskName, err := GetDiskName(diskURI)
 	mc := metrics.NewMetricContext(azureDiskCSIDriverName, "controller_publish_volume", d.cloud.ResourceGroup, d.cloud.SubscriptionID, d.Name)
 	isOperationSucceeded := false
 	defer func() {
@@ -555,8 +572,18 @@ func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.Control
 	if len(nodeID) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Node ID not provided")
 	}
-	nodeName := types.NodeName(nodeID)
-
+	var nodeName types.NodeName
+	if isValidIPv4(nodeID) {
+		instances, ok := d.cloud.Instances()
+		if !ok {
+			return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")
+		}
+		vmName, _ := instances.MapNodeIPTovmName(context.Background(), nodeID)
+		//nodeName := types.NodeName(nodeID)
+		nodeName = types.NodeName(vmName)
+	} else {
+		nodeName = types.NodeName(nodeID)
+	}
 	diskName, err := GetDiskName(diskURI)
 	if err != nil {
 		return nil, err

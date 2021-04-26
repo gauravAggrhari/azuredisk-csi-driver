@@ -338,3 +338,151 @@ func (c *Client) deleteInterface(ctx context.Context, resourceGroupName string, 
 
 	return c.armClient.DeleteResource(ctx, resourceID, "")
 }
+
+//Adding List to the interface client
+func (c *Client) List(ctx context.Context, resourceGroupName string) (result []network.Interface, rerr *retry.Error) {
+	mc := metrics.NewMetricContext("interfaces", "get", resourceGroupName, c.subscriptionID, "")
+
+	// Report errors if the client is rate limited.
+	if !c.rateLimiterReader.TryAccept() {
+		mc.RateLimitedCount()
+		return []network.Interface{}, retry.GetRateLimitError(false, "NicGet")
+	}
+
+	// Report errors if the client is throttled.
+	if c.RetryAfterReader.After(time.Now()) {
+		mc.ThrottledCount()
+		rerr := retry.GetThrottlingError("NicGet", "client throttled", c.RetryAfterReader)
+		return []network.Interface{}, rerr
+	}
+	result, err := c.listAll(context.Background(), resourceGroupName)
+	return result, err
+}
+
+func (c *Client) listAll(ctx context.Context, resourceGroupName string) ([]network.Interface, *retry.Error) {
+	resourceID := armclient.GetResourceID(
+		c.subscriptionID,
+		resourceGroupName,
+		"Microsoft.Network/networkInterfaces",
+		"",
+	)
+	result := make([]network.Interface, 0)
+	page := &InterfaceListResultPage{}
+	page.fn = c.listNextResults
+
+	response, rerr := c.armClient.GetResource(ctx, resourceID, "")
+	defer c.armClient.CloseResponse(ctx, response)
+	if rerr != nil {
+		klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "interface.get.request", resourceID, rerr.Error())
+		return result, rerr
+	}
+
+	var err error
+	page.ilr, err = c.listResponder(response)
+	if err != nil {
+		klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "interface.list.respond", resourceID, err)
+		return result, retry.GetError(response, err)
+	}
+
+	for {
+		result = append(result, page.Values()...)
+
+		// Abort the loop when there's no nextLink in the response.
+		if to.String(page.Response().NextLink) == "" {
+			break
+		}
+
+		if err = page.NextWithContext(ctx); err != nil {
+			klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "subnet.list.next", resourceID, err)
+			return result, retry.GetError(page.Response().Response.Response, err)
+		}
+	}
+
+	return result, nil
+}
+
+func (c *Client) listResponder(resp *http.Response) (result network.InterfaceListResult, err error) {
+	err = autorest.Respond(
+		resp,
+		autorest.ByIgnoring(),
+		azure.WithErrorUnlessStatusCode(http.StatusOK),
+		autorest.ByUnmarshallingJSON(&result))
+	result.Response = autorest.Response{Response: resp}
+	return
+}
+
+func (c *Client) InterfaceListResultPreparer(ctx context.Context, lblr network.InterfaceListResult) (*http.Request, error) {
+	if lblr.NextLink == nil || len(to.String(lblr.NextLink)) < 1 {
+		return nil, nil
+	}
+
+	decorators := []autorest.PrepareDecorator{
+		autorest.WithBaseURL(to.String(lblr.NextLink)),
+	}
+	return c.armClient.PrepareGetRequest(ctx, decorators...)
+}
+
+func (c *Client) listNextResults(ctx context.Context, lastResults network.InterfaceListResult) (result network.InterfaceListResult, err error) {
+	req, err := c.InterfaceListResultPreparer(ctx, lastResults)
+	if err != nil {
+		return result, autorest.NewErrorWithError(err, "subnetclient", "listNextResults", nil, "Failure preparing next results request")
+	}
+	if req == nil {
+		return
+	}
+
+	resp, rerr := c.armClient.Send(ctx, req)
+	defer c.armClient.CloseResponse(ctx, resp)
+	if rerr != nil {
+		result.Response = autorest.Response{Response: resp}
+		return result, autorest.NewErrorWithError(rerr.Error(), "interfaceclient", "listNextResults", resp, "Failure sending next results request")
+	}
+
+	result, err = c.listResponder(resp)
+	if err != nil {
+		err = autorest.NewErrorWithError(err, "interfaceclient", "listNextResults", resp, "Failure responding to next results request")
+	}
+
+	return
+}
+
+type InterfaceListResultPage struct {
+	fn  func(context.Context, network.InterfaceListResult) (network.InterfaceListResult, error)
+	ilr network.InterfaceListResult
+}
+
+// NextWithContext advances to the next page of values.  If there was an error making
+// the request the page does not advance and the error is returned.
+func (page *InterfaceListResultPage) NextWithContext(ctx context.Context) (err error) {
+	next, err := page.fn(ctx, page.ilr)
+	if err != nil {
+		return err
+	}
+	page.ilr = next
+	return nil
+}
+
+// Next advances to the next page of values.  If there was an error making
+// the request the page does not advance and the error is returned.
+// Deprecated: Use NextWithContext() instead.
+func (page *InterfaceListResultPage) Next() error {
+	return page.NextWithContext(context.Background())
+}
+
+// NotDone returns true if the page enumeration should be started or is not yet complete.
+func (page InterfaceListResultPage) NotDone() bool {
+	return !page.ilr.IsEmpty()
+}
+
+// Response returns the raw server response from the last page request.
+func (page InterfaceListResultPage) Response() network.InterfaceListResult {
+	return page.ilr
+}
+
+// Values returns the slice of values for the current page or nil if there are no values.
+func (page InterfaceListResultPage) Values() []network.Interface {
+	if page.ilr.IsEmpty() {
+		return nil
+	}
+	return *page.ilr.Value
+}

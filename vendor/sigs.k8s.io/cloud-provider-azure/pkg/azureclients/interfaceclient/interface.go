@@ -54,4 +54,7 @@ type Interface interface {
 
 	// Delete deletes a network interface by name.
 	Delete(ctx context.Context, resourceGroupName string, networkInterfaceName string) *retry.Error
+
+	//List all the interfaces
+	List(ctx context.Context, resourceGroupName string) ([]network.Interface, *retry.Error)
 }

@@ -105,3 +105,7 @@ func (mr *MockInterfaceMockRecorder) Delete(ctx, resourceGroupName, networkInter
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockInterface)(nil).Delete), ctx, resourceGroupName, networkInterfaceName)
 }
+
+func (m *MockInterface) List(ctx context.Context, resourceGroupName string) ([]network.Interface, *retry.Error) {
+	return nil, nil
+}
