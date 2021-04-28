@@ -516,48 +516,33 @@ func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, 
 		fmt.Printf("Error getting interfaces %v\n", inferr)
 		return "", nil
 	}
-	/*fmt.Printf("\nGo the interfaces %v\n", interfaceList)
-	for _, interf := range interfaceList {
-		fmt.Printf("\n Interface ID is %v\n", *interf.ID)
-		fmt.Printf("\n Interface Name is : %v\n", *interf.Name)
-		ipconfs := *interf.IPConfigurations
-		fmt.Println("Listing Subnet IDs for IPCONF")
-		for _, ipconf := range ipconfs {
-			fmt.Printf("Subnet ID is : %v\n", *ipconf.Subnet.ID)
+	/*
+		fmt.Printf("\nSubscription ID: %v\n", az.Config.SubscriptionID)
+		intfClient := network.NewInterfacesClient(az.Config.SubscriptionID)
+
+		env, envErr := azure.EnvironmentFromName(az.Config.Cloud)
+		if envErr != nil {
+			fmt.Printf("Error getting EnvironmentFromName %v\n", envErr)
 		}
-		fmt.Println("Private IPs are :")
-		for _, ipconf := range ipconfs {
-			fmt.Printf("Private IP is : %v\n", *ipconf.PrivateIPAddress)
+
+		oauthConfig, oAuthErr := adal.NewOAuthConfig(env.ActiveDirectoryEndpoint, az.Config.TenantID)
+		if oAuthErr != nil {
+			fmt.Printf("Error getting NewOAuthConfig %v\n", oAuthErr)
 		}
-		fmt.Printf("Virtual machine : %v\n", *interf.VirtualMachine.ID)
-	}
-	return "", nil
-	fmt.Printf("\nSubscription ID: %v\n", az.Config.SubscriptionID)
-	intfClient := network.NewInterfacesClient(az.Config.SubscriptionID)
 
-	env, envErr := azure.EnvironmentFromName(az.Config.Cloud)
-	if envErr != nil {
-		fmt.Printf("Error getting EnvironmentFromName %v\n", envErr)
-	}
+		armSpt, tokenErr := adal.NewServicePrincipalToken(*oauthConfig, az.Config.AADClientID, az.Config.AADClientSecret, env.ServiceManagementEndpoint)
 
-	oauthConfig, oAuthErr := adal.NewOAuthConfig(env.ActiveDirectoryEndpoint, az.Config.TenantID)
-	if oAuthErr != nil {
-		fmt.Printf("Error getting NewOAuthConfig %v\n", oAuthErr)
-	}
+		if tokenErr != nil {
+			fmt.Printf("Error getting NewOAuthConfig %v\n", tokenErr)
+		}
 
-	armSpt, tokenErr := adal.NewServicePrincipalToken(*oauthConfig, az.Config.AADClientID, az.Config.AADClientSecret, env.ServiceManagementEndpoint)
-
-	if tokenErr != nil {
-		fmt.Printf("Error getting NewOAuthConfig %v\n", tokenErr)
-	}
-
-	//authorizer := autorest.NewBearerAuthorizer(armSpt)
-	//intfClient.Authorizer = authorizer
-	//results, err := intfClient.ListComplete(context.Background(), az.Config.ResourceGroup)
-	if err != nil {
-		fmt.Printf("Could not get the list of NICs : %v", err)
-	}
-	//fmt.Printf("Got List of NICS.. %v\n", results)
+		//authorizer := autorest.NewBearerAuthorizer(armSpt)
+		//intfClient.Authorizer = authorizer
+		//results, err := intfClient.ListComplete(context.Background(), az.Config.ResourceGroup)
+		if err != nil {
+			fmt.Printf("Could not get the list of NICs : %v", err)
+		}
+		//fmt.Printf("Got List of NICS.. %v\n", results)
 	*/
 	//Subnets
 	subNetClient := az.SubnetsClient
@@ -578,25 +563,20 @@ func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, 
 	//====================
 	vmmap := make(map[string]string)
 	for _, interf := range interfaceList {
-		fmt.Println("Inside for loop")
 		ipcs := *interf.IPConfigurations
 		privateIPs := make([]string, 1)
 		var vm string
 		for _, ipc := range ipcs {
-			fmt.Println("Inside inner for loop")
 			subnetID := *ipc.Subnet.ID
 			if _, ok := subnetMap[subnetID]; ok {
 				privateIPs = append(privateIPs, *ipc.PrivateIPAddress)
-				fmt.Printf("\n Private IPs are : %v\n", privateIPs)
 				if interf.VirtualMachine != nil {
 					vm = *interf.VirtualMachine.ID
-					fmt.Printf("\nVirtual Machines are : %v\n", vm)
 				}
 			}
 		}
 		split := strings.Split(vm, "/")
 		vmmap[privateIPs[1]] = split[len(split)-1]
-		fmt.Println(privateIPs, "\t", split[len(split)-1])
 	}
 	//====================
 	/*

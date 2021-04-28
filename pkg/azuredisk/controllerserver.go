@@ -19,15 +19,12 @@ package azuredisk
 import (
 	"context"
 	"fmt"
-	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2020-12-01/compute"
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
-	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/protobuf/ptypes"
 	"google.golang.org/grpc/codes"
@@ -40,6 +37,7 @@ import (
 	volerr "k8s.io/cloud-provider/volume/errors"
 	"k8s.io/klog/v2"
 
+	csicommon "sigs.k8s.io/azuredisk-csi-driver/pkg/csi-common"
 	volumehelper "sigs.k8s.io/azuredisk-csi-driver/pkg/util"
 	"sigs.k8s.io/cloud-provider-azure/pkg/metrics"
 	azure "sigs.k8s.io/cloud-provider-azure/pkg/provider"
@@ -84,13 +82,14 @@ type listVolumeStatus struct {
 	err           error
 }
 
+/*
 const (
 	subID = "208a18fa-4027-4666-b866-df6f940e84dd"
 	rg    = "satellite-rg"
 	vnet  = "satellite-vnet"
 )
-
-func isValidIPv4(host string) bool {
+*/
+/*func isValidIPv4(host string) bool {
 	parts := strings.Split(host, ".")
 
 	if len(parts) < 4 {
@@ -107,8 +106,9 @@ func isValidIPv4(host string) bool {
 		}
 	}
 	return true
-}
+}*/
 
+/*
 func getNodeName(nodeID string) string {
 	intfClient := network.NewInterfacesClient(subID)
 	subnetClient := network.NewSubnetsClient(subID)
@@ -168,7 +168,7 @@ func getNodeName(nodeID string) string {
 	fmt.Println("============================================================================")
 	return vMName
 }
-
+*/
 // CreateVolume provisions an azure disk
 func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	if err := d.ValidateControllerServiceRequest(csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME); err != nil {
@@ -490,23 +490,27 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 
 	//Get the VM name from the private IP
 	var nodeName types.NodeName
-	if isValidIPv4(nodeID) {
+	if csicommon.IsValidIPv4(nodeID) && d.cloud.VMType == "standard" {
 		instances, ok := d.cloud.Instances()
 		if !ok {
 			return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")
 		}
-		vmName, _ := instances.MapNodeIPTovmName(context.Background(), nodeID)
+		vmName, mapErr := instances.MapNodeIPTovmName(context.Background(), nodeID)
+		if mapErr != nil {
+			klog.Warningf("Could not Mao the IP to VM Name, error : %v", mapErr)
+		}
 		fmt.Printf("\n############# Got the VM name ################# %v\n", vmName)
 		nodeName = types.NodeName(vmName)
 		//nodeName := types.NodeName(nodeID)
-		if err != nil {
-			return nil, err
-		}
 	} else {
+		fmt.Println("Not a standard type")
 		nodeName = types.NodeName(nodeID)
 	}
 
 	diskName, err := GetDiskName(diskURI)
+	if err != nil {
+		return nil, err
+	}
 	mc := metrics.NewMetricContext(azureDiskCSIDriverName, "controller_publish_volume", d.cloud.ResourceGroup, d.cloud.SubscriptionID, d.Name)
 	isOperationSucceeded := false
 	defer func() {
@@ -573,7 +577,7 @@ func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.Control
 		return nil, status.Error(codes.InvalidArgument, "Node ID not provided")
 	}
 	var nodeName types.NodeName
-	if isValidIPv4(nodeID) {
+	if csicommon.IsValidIPv4(nodeID) && d.cloud.VMType == "standard" {
 		instances, ok := d.cloud.Instances()
 		if !ok {
 			return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")

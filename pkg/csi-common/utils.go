@@ -18,6 +18,7 @@ package csicommon
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/context"
@@ -102,4 +103,23 @@ func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, h
 		klog.V(level).Infof("GRPC response: %s", protosanitizer.StripSecrets(resp))
 	}
 	return resp, err
+}
+
+func IsValidIPv4(host string) bool {
+	parts := strings.Split(host, ".")
+
+	if len(parts) < 4 {
+		return false
+	}
+
+	for _, x := range parts {
+		if i, err := strconv.Atoi(x); err == nil {
+			if i < 0 || i > 255 {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+	return true
 }

@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	csicommon "sigs.k8s.io/azuredisk-csi-driver/pkg/csi-common"
 	volumehelper "sigs.k8s.io/azuredisk-csi-driver/pkg/util"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -290,12 +291,26 @@ func (d *Driver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabi
 
 // NodeGetInfo return info of the node on which this plugin is running
 func (d *Driver) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+	var (
+		vmName       string
+		instanceType string
+		err          error
+		mapErr       error
+	)
 	instances, ok := d.cloud.Instances()
 	if !ok {
 		return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")
 	}
-
-	instanceType, err := instances.InstanceType(context.TODO(), types.NodeName(d.NodeID))
+	if csicommon.IsValidIPv4(d.NodeID) && d.cloud.VMType == "standard" {
+		vmName, mapErr = instances.MapNodeIPTovmName(context.Background(), d.NodeID)
+		if mapErr != nil {
+			klog.Warningf("Could not Map the IP to VM Name, error : %v", mapErr)
+		}
+		instanceType, err = instances.InstanceType(context.TODO(), types.NodeName(vmName))
+	} else {
+		fmt.Println("Not a standard type")
+		instanceType, err = instances.InstanceType(context.TODO(), types.NodeName(d.NodeID))
+	}
 	if err != nil {
 		klog.Warningf("Failed to get instance type from Azure cloud provider, nodeName: %v, error: %v", d.NodeID, err)
 		instanceType = ""
