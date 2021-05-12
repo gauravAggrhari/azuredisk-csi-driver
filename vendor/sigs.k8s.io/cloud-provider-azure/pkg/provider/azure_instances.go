@@ -23,6 +23,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2020-08-01/network"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	cloudprovider "k8s.io/cloud-provider"
@@ -30,6 +31,7 @@ import (
 
 	azcache "sigs.k8s.io/cloud-provider-azure/pkg/cache"
 	"sigs.k8s.io/cloud-provider-azure/pkg/consts"
+	"sigs.k8s.io/cloud-provider-azure/pkg/retry"
 )
 
 const (
@@ -429,6 +431,7 @@ func (az *Cloud) InstanceType(ctx context.Context, name types.NodeName) (string,
 		}
 		if !isLocalInstance {
 			if az.VMSet != nil {
+				fmt.Printf("Node name is %v", name)
 				return az.VMSet.GetInstanceTypeByNodeName(string(name))
 			}
 
@@ -511,39 +514,18 @@ func mapNodeNameToVMName(nodeName types.NodeName) string {
 func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, error) {
 	fmt.Println("#############TESTING###################")
 	infClient := az.InterfacesClient
-	interfaceList, inferr := infClient.List(context.Background(), az.Config.ResourceGroup)
+	var interfaceList = make([]network.Interface, 0)
+	var inferr *retry.Error
+	if strings.ToLower(az.Config.VMType) == "standard" {
+		interfaceList, inferr = infClient.List(context.Background(), az.Config.ResourceGroup)
+	} else if strings.ToLower(az.Config.VMType) == "vmss" {
+		interfaceList, inferr = infClient.ListVMSSNetworkInterfaces(context.Background(), az.Config.ResourceGroup, az.Config.PrimaryScaleSetName)
+	}
+
 	if inferr != nil {
 		fmt.Printf("Error getting interfaces %v\n", inferr)
 		return "", nil
 	}
-	/*
-		fmt.Printf("\nSubscription ID: %v\n", az.Config.SubscriptionID)
-		intfClient := network.NewInterfacesClient(az.Config.SubscriptionID)
-
-		env, envErr := azure.EnvironmentFromName(az.Config.Cloud)
-		if envErr != nil {
-			fmt.Printf("Error getting EnvironmentFromName %v\n", envErr)
-		}
-
-		oauthConfig, oAuthErr := adal.NewOAuthConfig(env.ActiveDirectoryEndpoint, az.Config.TenantID)
-		if oAuthErr != nil {
-			fmt.Printf("Error getting NewOAuthConfig %v\n", oAuthErr)
-		}
-
-		armSpt, tokenErr := adal.NewServicePrincipalToken(*oauthConfig, az.Config.AADClientID, az.Config.AADClientSecret, env.ServiceManagementEndpoint)
-
-		if tokenErr != nil {
-			fmt.Printf("Error getting NewOAuthConfig %v\n", tokenErr)
-		}
-
-		//authorizer := autorest.NewBearerAuthorizer(armSpt)
-		//intfClient.Authorizer = authorizer
-		//results, err := intfClient.ListComplete(context.Background(), az.Config.ResourceGroup)
-		if err != nil {
-			fmt.Printf("Could not get the list of NICs : %v", err)
-		}
-		//fmt.Printf("Got List of NICS.. %v\n", results)
-	*/
 	//Subnets
 	subNetClient := az.SubnetsClient
 	fmt.Printf("Got the subNetClient %v\n", subNetClient)
@@ -560,7 +542,7 @@ func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, 
 		fmt.Printf("Subnet Name is %v\n", *subnet.Name)
 		fmt.Printf("Subnet Id is %v\n", *subnet.ID)
 	}
-	//====================
+
 	vmmap := make(map[string]string)
 	for _, interf := range interfaceList {
 		ipcs := *interf.IPConfigurations
@@ -570,42 +552,16 @@ func (az *Cloud) MapNodeIPTovmName(ctx context.Context, nodeIp string) (string, 
 			subnetID := *ipc.Subnet.ID
 			if _, ok := subnetMap[subnetID]; ok {
 				privateIPs = append(privateIPs, *ipc.PrivateIPAddress)
-				if interf.VirtualMachine != nil {
+				vm, _, _ = az.VMSet.GetNodeNameByIPConfigurationID(*ipc.ID)
+				/*if interf.VirtualMachine != nil {
 					vm = *interf.VirtualMachine.ID
-				}
+				}*/
 			}
 		}
-		split := strings.Split(vm, "/")
-		vmmap[privateIPs[1]] = split[len(split)-1]
+		//split := strings.Split(vm, "/")
+		//vmmap[privateIPs[1]] = split[len(split)-1]
+		vmmap[privateIPs[1]] = vm
 	}
-	//====================
-	/*
-		//Iterate over the NICS
-		vmmap := make(map[string]string)
-		fmt.Println("Getting all the VMs..")
-		for results.NotDone() {
-			fmt.Println("Inside for loop")
-			ipcs := *results.Value().IPConfigurations
-			privateIPs := make([]string, 1)
-			var vm string
-			for _, ipc := range ipcs {
-				fmt.Println("Inside inner for loop")
-				subnetID := *ipc.Subnet.ID
-				if _, ok := subnetMap[subnetID]; ok {
-					privateIPs = append(privateIPs, *ipc.PrivateIPAddress)
-					fmt.Printf("\n Private IPs are : %v\n", privateIPs)
-					if results.Value().VirtualMachine != nil {
-						vm = *results.Value().VirtualMachine.ID
-						fmt.Printf("\nVirtual Machines are : %v\n", vm)
-					}
-				}
-			}
-			split := strings.Split(vm, "/")
-			vmmap[privateIPs[1]] = split[len(split)-1]
-			fmt.Println(privateIPs, "\t", split[len(split)-1])
-			results.NextWithContext(context.Background())
-		}
-	*/
 	vMName, ok := vmmap[nodeIp]
 	if !ok {
 		fmt.Printf("Node id was not found %v\n", nodeIp)

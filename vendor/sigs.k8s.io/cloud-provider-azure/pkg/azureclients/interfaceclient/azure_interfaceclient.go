@@ -393,7 +393,81 @@ func (c *Client) listAll(ctx context.Context, resourceGroupName string) ([]netwo
 		}
 
 		if err = page.NextWithContext(ctx); err != nil {
-			klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "subnet.list.next", resourceID, err)
+			klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "interface.list.next", resourceID, err)
+			return result, retry.GetError(page.Response().Response.Response, err)
+		}
+	}
+
+	return result, nil
+}
+
+func (c *Client) ListVMSSNetworkInterfaces(ctx context.Context, resourceGroupName, virtualMachineScaleSetName string) (result []network.Interface, rerr *retry.Error) {
+	mc := metrics.NewMetricContext("interfaces", "get", resourceGroupName, c.subscriptionID, "")
+
+	// Report errors if the client is rate limited.
+	if !c.rateLimiterReader.TryAccept() {
+		mc.RateLimitedCount()
+		return []network.Interface{}, retry.GetRateLimitError(false, "NicGet")
+	}
+
+	// Report errors if the client is throttled.
+	if c.RetryAfterReader.After(time.Now()) {
+		mc.ThrottledCount()
+		rerr := retry.GetThrottlingError("NicGet", "client throttled", c.RetryAfterReader)
+		return []network.Interface{}, rerr
+	}
+	result, err := c.listVMSSNetworkInterfaces(context.Background(), resourceGroupName, virtualMachineScaleSetName)
+	return result, err
+}
+
+func (c *Client) listVMSSNetworkInterfaces(ctx context.Context, resourceGroupName, virtualMachineScaleSetName string) ([]network.Interface, *retry.Error) {
+	resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachineScaleSets/%s/networkInterfaces",
+		autorest.Encode("path", c.subscriptionID),
+		autorest.Encode("path", resourceGroupName),
+		autorest.Encode("path", virtualMachineScaleSetName),
+	)
+	result := make([]network.Interface, 0)
+	page := &InterfaceListResultPage{}
+	page.fn = c.listNextResults
+
+	computeAPIVersion := ComputeAPIVersion
+	if strings.EqualFold(c.cloudName, AzureStackCloudName) && !c.disableAzureStackCloud {
+		computeAPIVersion = AzureStackComputeAPIVersion
+	}
+	queryParameters := map[string]interface{}{
+		"api-version": computeAPIVersion,
+	}
+	/*if len(expand) > 0 {
+		queryParameters["$expand"] = autorest.Encode("query", expand)
+	}*/
+	decorators := []autorest.PrepareDecorator{
+		autorest.WithQueryParameters(queryParameters),
+	}
+
+	response, rerr := c.armClient.GetResourceWithDecorators(ctx, resourceID, decorators)
+	defer c.armClient.CloseResponse(ctx, response)
+	if rerr != nil {
+		klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "interface.get.request", resourceID, rerr.Error())
+		return result, rerr
+	}
+
+	var err error
+	page.ilr, err = c.listResponder(response)
+	if err != nil {
+		klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "interface.list.respond", resourceID, err)
+		return result, retry.GetError(response, err)
+	}
+
+	for {
+		result = append(result, page.Values()...)
+
+		// Abort the loop when there's no nextLink in the response.
+		if to.String(page.Response().NextLink) == "" {
+			break
+		}
+
+		if err = page.NextWithContext(ctx); err != nil {
+			klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "interface.list.next", resourceID, err)
 			return result, retry.GetError(page.Response().Response.Response, err)
 		}
 	}

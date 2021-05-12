@@ -57,4 +57,6 @@ type Interface interface {
 
 	//List all the interfaces
 	List(ctx context.Context, resourceGroupName string) ([]network.Interface, *retry.Error)
+	//List all the network interfaces for a scaleset
+	ListVMSSNetworkInterfaces(ctx context.Context, resourceGroupName, scaleSetname string) ([]network.Interface, *retry.Error)
 }

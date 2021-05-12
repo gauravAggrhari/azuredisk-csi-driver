@@ -301,14 +301,13 @@ func (d *Driver) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (
 	if !ok {
 		return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")
 	}
-	if csicommon.IsValidIPv4(d.NodeID) && d.cloud.VMType == "standard" {
+	if csicommon.IsValidIPv4(d.NodeID) {
 		vmName, mapErr = instances.MapNodeIPTovmName(context.Background(), d.NodeID)
 		if mapErr != nil {
 			klog.Warningf("Could not Map the IP to VM Name, error : %v", mapErr)
 		}
 		instanceType, err = instances.InstanceType(context.TODO(), types.NodeName(vmName))
 	} else {
-		fmt.Println("Not a standard type")
 		instanceType, err = instances.InstanceType(context.TODO(), types.NodeName(d.NodeID))
 	}
 	if err != nil {

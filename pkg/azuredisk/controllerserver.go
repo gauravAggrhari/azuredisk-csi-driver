@@ -490,14 +490,14 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 
 	//Get the VM name from the private IP
 	var nodeName types.NodeName
-	if csicommon.IsValidIPv4(nodeID) && d.cloud.VMType == "standard" {
+	if csicommon.IsValidIPv4(nodeID) {
 		instances, ok := d.cloud.Instances()
 		if !ok {
 			return nil, status.Error(codes.Internal, "Failed to get instances from cloud provider")
 		}
 		vmName, mapErr := instances.MapNodeIPTovmName(context.Background(), nodeID)
 		if mapErr != nil {
-			klog.Warningf("Could not Mao the IP to VM Name, error : %v", mapErr)
+			klog.Warningf("Could not Map the IP to VM Name, error : %v", mapErr)
 		}
 		fmt.Printf("\n############# Got the VM name ################# %v\n", vmName)
 		nodeName = types.NodeName(vmName)

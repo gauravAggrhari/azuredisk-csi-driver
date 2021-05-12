@@ -109,3 +109,7 @@ func (mr *MockInterfaceMockRecorder) Delete(ctx, resourceGroupName, networkInter
 func (m *MockInterface) List(ctx context.Context, resourceGroupName string) ([]network.Interface, *retry.Error) {
 	return nil, nil
 }
+
+func (c *MockInterface) ListVMSSNetworkInterfaces(ctx context.Context, resourceGroupName, virtualMachineScaleSetName string) (result []network.Interface, rerr *retry.Error) {
+	return nil, nil
+}
